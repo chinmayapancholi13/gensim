@@ -133,6 +133,7 @@ from scipy import stats
 logger = logging.getLogger(__name__)
 
 try:
+    raise ImportError
     from gensim.models.word2vec_inner import train_batch_sg, train_batch_cbow
     from gensim.models.word2vec_inner import score_sentence_sg, score_sentence_cbow
     from gensim.models.word2vec_inner import FAST_VERSION, MAX_WORDS_IN_BATCH
@@ -272,6 +273,8 @@ def train_sg_pair(model, word, context_index, alpha, learn_vectors=True, learn_h
 
     neu1e = zeros(l1.shape)
 
+    # print "model.neg_labels -> ", model.neg_labels
+
     if model.hs:
         # work on the entire tree at once, to push as much work into numpy's C routines as possible (performance)
         l2a = deepcopy(model.syn1[predict_word.point])  # 2d matrix, codelen x layer1_size
@@ -282,6 +285,7 @@ def train_sg_pair(model, word, context_index, alpha, learn_vectors=True, learn_h
         neu1e += dot(ga, l2a)  # save error
 
     if model.negative:
+    # if model.negative > 0:
         # use this word (label = 1) + `negative` other random words not from this sentence (label = 0)
         word_indices = [predict_word.index]
         while len(word_indices) < model.negative + 1:
@@ -312,6 +316,7 @@ def train_cbow_pair(model, word, input_word_indices, l1, alpha, learn_vectors=Tr
         neu1e += dot(ga, l2a)  # save error
 
     if model.negative:
+    # if model.negative > 0:
         # use this word (label = 1) + `negative` other random words not from this sentence (label = 0)
         word_indices = [word.index]
         while len(word_indices) < model.negative + 1:
@@ -710,6 +715,7 @@ class Word2Vec(utils.SaveLoad):
             # add info about each word's Huffman encoding
             self.create_binary_tree()
         if self.negative:
+        # if self.negative > 0:
             # build the table for drawing random words (for negative sampling)
             self.make_cum_table()
         if self.null_word:
@@ -1103,6 +1109,7 @@ class Word2Vec(utils.SaveLoad):
         if self.hs:
             self.syn1 = vstack([self.syn1, zeros((gained_vocab, self.layer1_size), dtype=REAL)])
         if self.negative:
+        # if self.negative > 0:
             self.syn1neg = vstack([self.syn1neg, zeros((gained_vocab, self.layer1_size), dtype=REAL)])
         self.wv.syn0norm = None
 
@@ -1120,6 +1127,7 @@ class Word2Vec(utils.SaveLoad):
         if self.hs:
             self.syn1 = zeros((len(self.wv.vocab), self.layer1_size), dtype=REAL)
         if self.negative:
+        # if self.negative > 0:
             self.syn1neg = zeros((len(self.wv.vocab), self.layer1_size), dtype=REAL)
         self.wv.syn0norm = None
 
@@ -1228,6 +1236,7 @@ class Word2Vec(utils.SaveLoad):
         if self.hs:
             report['syn1'] = vocab_size * self.layer1_size * dtype(REAL).itemsize
         if self.negative:
+        # if self.negative > 0:
             report['syn1neg'] = vocab_size * self.layer1_size * dtype(REAL).itemsize
         report['total'] = sum(report.values())
         logger.info("estimated required memory for %i words and %i dimensions: %i bytes",
@@ -1288,6 +1297,7 @@ class Word2Vec(utils.SaveLoad):
         # update older models
         if hasattr(model, 'table'):
             delattr(model, 'table')  # discard in favor of cum_table
+        # if model.negative > 0 and hasattr(model.wv, 'index2word'):
         if model.negative and hasattr(model.wv, 'index2word'):
             model.make_cum_table()  # rebuild cum_table from vocabulary
         if not hasattr(model, 'corpus_count'):
