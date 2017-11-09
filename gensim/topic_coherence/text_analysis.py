@@ -17,9 +17,10 @@ from collections import Counter
 
 import numpy as np
 import scipy.sparse as sps
-from six import viewitems, string_types
+from six import iteritems, string_types
 
 from gensim import utils
+from gensim.models.word2vec import Word2Vec
 
 logger = logging.getLogger(__name__)
 
@@ -29,9 +30,8 @@ def _ids_to_words(ids, dictionary):
     This function abstracts away the differences between the HashDictionary and the standard one.
 
     Args:
-    ----
-    ids: list of list of tuples, where each tuple contains (token_id, iterable of token_ids).
-         This is the format returned by the topic_coherence.segmentation functions.
+        ids: list of list of tuples, where each tuple contains (token_id, iterable of token_ids).
+            This is the format returned by the topic_coherence.segmentation functions.
     """
     if not dictionary.id2token:  # may not be initialized in the standard gensim.corpora.Dictionary
         setattr(dictionary, 'id2token', {v: k for k, v in dictionary.token2id.items()})
@@ -143,7 +143,7 @@ class InvertedIndexBased(BaseAnalyzer):
         return len(s1.intersection(s2))
 
     def index_to_dict(self):
-        contiguous2id = {n: word_id for word_id, n in viewitems(self.id2contiguous)}
+        contiguous2id = {n: word_id for word_id, n in iteritems(self.id2contiguous)}
         return {contiguous2id[n]: doc_id_set for n, doc_id_set in enumerate(self._inverted_index)}
 
 
@@ -169,9 +169,8 @@ class WindowedTextsAnalyzer(UsesDictionary):
     def __init__(self, relevant_ids, dictionary):
         """
         Args:
-        ----
-        relevant_ids: the set of words that occurrences should be accumulated for.
-        dictionary: Dictionary instance with mappings for the relevant_ids.
+            relevant_ids: the set of words that occurrences should be accumulated for.
+            dictionary: Dictionary instance with mappings for the relevant_ids.
         """
         super(WindowedTextsAnalyzer, self).__init__(relevant_ids, dictionary)
         self._none_token = self._vocab_size  # see _iter_texts for use of none token
@@ -221,7 +220,6 @@ class WordOccurrenceAccumulator(WindowedTextsAnalyzer):
         self._co_occurrences = sps.lil_matrix((self._vocab_size, self._vocab_size), dtype='uint32')
 
         self._uniq_words = np.zeros((self._vocab_size + 1,), dtype=bool)  # add 1 for none token
-        self._mask = self._uniq_words[:-1]  # to exclude none token
         self._counter = Counter()
 
     def __str__(self):
@@ -244,16 +242,17 @@ class WordOccurrenceAccumulator(WindowedTextsAnalyzer):
         self._counter.clear()
 
         super(WordOccurrenceAccumulator, self).accumulate(texts, window_size)
-        for combo, count in viewitems(self._counter):
+        for combo, count in iteritems(self._counter):
             self._co_occurrences[combo] += count
 
         return self
 
     def analyze_text(self, window, doc_num=None):
         self._slide_window(window, doc_num)
-        if self._mask.any():
-            self._occurrences[self._mask] += 1
-            self._counter.update(itertools.combinations(np.nonzero(self._mask)[0], 2))
+        mask = self._uniq_words[:-1]  # to exclude none token
+        if mask.any():
+            self._occurrences[mask] += 1
+            self._counter.update(itertools.combinations(np.nonzero(mask)[0], 2))
 
     def _slide_window(self, window, doc_num):
         if doc_num != self._current_doc_num:
@@ -273,7 +272,8 @@ class WordOccurrenceAccumulator(WindowedTextsAnalyzer):
         """
         co_occ = self._co_occurrences
         co_occ.setdiag(self._occurrences)  # diagonal should be equal to occurrence counts
-        self._co_occurrences = co_occ + co_occ.T - sps.diags(co_occ.diagonal(), dtype='uint32')
+        self._co_occurrences = \
+            co_occ + co_occ.T - sps.diags(co_occ.diagonal(), offsets=0, dtype='uint32')
 
     def _get_occurrences(self, word_id):
         return self._occurrences[word_id]
@@ -301,11 +301,10 @@ class ParallelWordOccurrenceAccumulator(WindowedTextsAnalyzer):
     def __init__(self, processes, *args, **kwargs):
         """
         Args:
-        ----
-        processes : number of processes to use; must be at least two.
-        args : should include `relevant_ids` and `dictionary` (see `UsesDictionary.__init__`).
-        kwargs : can include `batch_size`, which is the number of docs to send to a worker at a
-                 time. If not included, it defaults to 64.
+            processes : number of processes to use; must be at least two.
+            args : should include `relevant_ids` and `dictionary` (see `UsesDictionary.__init__`).
+            kwargs : can include `batch_size`, which is the number of docs to send to a worker at a
+                time. If not included, it defaults to 64.
         """
         super(ParallelWordOccurrenceAccumulator, self).__init__(*args)
         if processes < 2:
@@ -416,9 +415,7 @@ class ParallelWordOccurrenceAccumulator(WindowedTextsAnalyzer):
         # Workers do partial accumulation, so none of the co-occurrence matrices are symmetrized.
         # This is by design, to avoid unnecessary matrix additions/conversions during accumulation.
         accumulator._symmetrize()
-        logger.info(
-            "accumulated word occurrence stats for %d virtual documents",
-            accumulator.num_docs)
+        logger.info("accumulated word occurrence stats for %d virtual documents", accumulator.num_docs)
         return accumulator
 
 
@@ -440,7 +437,7 @@ class AccumulatingWorker(mp.Process):
             logger.info(
                 "%s interrupted after processing %d documents",
                 self.__class__.__name__, self.accumulator.num_docs)
-        except:
+        except Exception:
             logger.exception("worker encountered unexpected exception")
         finally:
             self.reply_to_master()
@@ -469,3 +466,66 @@ class AccumulatingWorker(mp.Process):
         logger.info("serializing accumulator to return to master...")
         self.output_q.put(self.accumulator, block=False)
         logger.info("accumulator serialized")
+
+
+class WordVectorsAccumulator(UsesDictionary):
+    """Accumulate context vectors for words using word vector embeddings."""
+
+    def __init__(self, relevant_ids, dictionary, model=None, **model_kwargs):
+        """
+        Args:
+            model: if None, a new Word2Vec model is trained on the given text corpus.
+                If not None, it should be a pre-trained Word2Vec context vectors
+                (gensim.models.keyedvectors.KeyedVectors instance).
+            model_kwargs: if model is None, these keyword arguments will be passed
+                through to the Word2Vec constructor.
+        """
+        super(WordVectorsAccumulator, self).__init__(relevant_ids, dictionary)
+        self.model = model
+        self.model_kwargs = model_kwargs
+
+    def not_in_vocab(self, words):
+        uniq_words = set(utils.flatten(words))
+        return set(word for word in uniq_words if word not in self.model.vocab)
+
+    def get_occurrences(self, word):
+        """Return number of docs the word occurs in, once `accumulate` has been called."""
+        try:
+            self.token2id[word]  # is this a token or an id?
+        except KeyError:
+            word = self.dictionary.id2token[word]
+        return self.model.vocab[word].count
+
+    def get_co_occurrences(self, word1, word2):
+        """Return number of docs the words co-occur in, once `accumulate` has been called."""
+        raise NotImplementedError("Word2Vec model does not support co-occurrence counting")
+
+    def accumulate(self, texts, window_size):
+        if self.model is not None:
+            logger.debug("model is already trained; no accumulation necessary")
+            return self
+
+        kwargs = self.model_kwargs.copy()
+        if window_size is not None:
+            kwargs['window'] = window_size
+        kwargs['min_count'] = kwargs.get('min_count', 1)
+        kwargs['sg'] = kwargs.get('sg', 1)
+        kwargs['hs'] = kwargs.get('hw', 0)
+
+        self.model = Word2Vec(**kwargs)
+        self.model.build_vocab(texts)
+        self.model.train(texts, total_examples=self.model.corpus_count, epochs=self.model.iter)
+        self.model = self.model.wv  # retain KeyedVectors
+        return self
+
+    def ids_similarity(self, ids1, ids2):
+        words1 = self._words_with_embeddings(ids1)
+        words2 = self._words_with_embeddings(ids2)
+        return self.model.n_similarity(words1, words2)
+
+    def _words_with_embeddings(self, ids):
+        if not hasattr(ids, '__iter__'):
+            ids = [ids]
+
+        words = [self.dictionary.id2token[word_id] for word_id in ids]
+        return [word for word in words if word in self.model.vocab]

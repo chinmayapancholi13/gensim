@@ -10,38 +10,23 @@ Unit tests for the `corpora.Dictionary` class.
 
 from collections import Mapping
 import logging
-import tempfile
 import unittest
+import codecs
 import os
 import os.path
 
 import scipy
 import gensim
 from gensim.corpora import Dictionary
+from gensim.utils import to_utf8
+from gensim.test.utils import get_tmpfile, common_texts
 from six import PY3
 from six.moves import zip
 
 
-# sample data files are located in the same folder
-module_path = os.path.dirname(__file__)
-
-
-def get_tmpfile(suffix):
-    return os.path.join(tempfile.gettempdir(), suffix)
-
-
 class TestDictionary(unittest.TestCase):
     def setUp(self):
-        self.texts = [
-                ['human', 'interface', 'computer'],
-                ['survey', 'user', 'computer', 'system', 'response', 'time'],
-                ['eps', 'user', 'interface', 'system'],
-                ['system', 'human', 'system', 'eps'],
-                ['user', 'response', 'time'],
-                ['trees'],
-                ['graph', 'trees'],
-                ['graph', 'minors', 'trees'],
-                ['graph', 'minors', 'survey']]
+        self.texts = common_texts
 
     def testDocFreqOneDoc(self):
         texts = [['human', 'interface', 'computer']]
@@ -100,9 +85,10 @@ class TestDictionary(unittest.TestCase):
         self.assertEqual(sorted(d.dfs.keys()), expected_keys)
         self.assertEqual(sorted(d.dfs.values()), expected_values)
 
-        expected_keys = sorted(['computer', 'eps', 'graph', 'human',
-                                'interface', 'minors', 'response', 'survey',
-                                'system', 'time', 'trees', 'user'])
+        expected_keys = sorted([
+            'computer', 'eps', 'graph', 'human', 'interface',
+            'minors', 'response', 'survey', 'system', 'time', 'trees', 'user'
+        ])
         expected_values = list(range(12))
         self.assertEqual(sorted(d.token2id.keys()), expected_keys)
         self.assertEqual(sorted(d.token2id.values()), expected_values)
@@ -125,21 +111,21 @@ class TestDictionary(unittest.TestCase):
         # provide keep_tokens argument, keep the tokens given
         d = Dictionary(self.texts)
         d.filter_extremes(no_below=3, no_above=1.0, keep_tokens=['human', 'survey'])
-        expected = set(['graph', 'trees', 'human', 'system', 'user', 'survey'])
+        expected = {'graph', 'trees', 'human', 'system', 'user', 'survey'}
         self.assertEqual(set(d.token2id.keys()), expected)
 
     def testFilterKeepTokens_unchangedFunctionality(self):
         # do not provide keep_tokens argument, filter_extremes functionality is unchanged
         d = Dictionary(self.texts)
         d.filter_extremes(no_below=3, no_above=1.0)
-        expected = set(['graph', 'trees', 'system', 'user'])
+        expected = {'graph', 'trees', 'system', 'user'}
         self.assertEqual(set(d.token2id.keys()), expected)
 
     def testFilterKeepTokens_unseenToken(self):
         # do provide keep_tokens argument with unseen tokens, filter_extremes functionality is unchanged
         d = Dictionary(self.texts)
         d.filter_extremes(no_below=3, no_above=1.0, keep_tokens=['unknown_token'])
-        expected = set(['graph', 'trees', 'system', 'user'])
+        expected = {'graph', 'trees', 'system', 'user'}
         self.assertEqual(set(d.token2id.keys()), expected)
 
     def testFilterMostFrequent(self):
@@ -158,7 +144,8 @@ class TestDictionary(unittest.TestCase):
         expected = {
             'computer': 0, 'eps': 8, 'graph': 10, 'human': 1,
             'interface': 2, 'minors': 11, 'response': 3, 'survey': 4,
-            'system': 5, 'time': 6, 'trees': 9, 'user': 7}
+            'system': 5, 'time': 6, 'trees': 9, 'user': 7
+        }
         del expected[removed_word]
         self.assertEqual(sorted(d.token2id.keys()), sorted(expected.keys()))
 
@@ -184,28 +171,29 @@ class TestDictionary(unittest.TestCase):
         small_text = [
             ["prvé", "slovo"],
             ["slovo", "druhé"],
-            ["druhé", "slovo"]]
+            ["druhé", "slovo"]
+        ]
 
         d = Dictionary(small_text)
 
         d.save_as_text(tmpf)
-        with open(tmpf) as file:
+        with codecs.open(tmpf, 'r', encoding='utf-8') as file:
             serialized_lines = file.readlines()
-            self.assertEqual(serialized_lines[0], "3\n")
+            self.assertEqual(serialized_lines[0], u"3\n")
             self.assertEqual(len(serialized_lines), 4)
             # We do not know, which word will have which index
-            self.assertEqual(serialized_lines[1][1:], "\tdruhé\t2\n")
-            self.assertEqual(serialized_lines[2][1:], "\tprvé\t1\n")
-            self.assertEqual(serialized_lines[3][1:], "\tslovo\t3\n")
+            self.assertEqual(serialized_lines[1][1:], u"\tdruhé\t2\n")
+            self.assertEqual(serialized_lines[2][1:], u"\tprvé\t1\n")
+            self.assertEqual(serialized_lines[3][1:], u"\tslovo\t3\n")
 
         d.save_as_text(tmpf, sort_by_word=False)
-        with open(tmpf) as file:
+        with codecs.open(tmpf, 'r', encoding='utf-8') as file:
             serialized_lines = file.readlines()
-            self.assertEqual(serialized_lines[0], "3\n")
+            self.assertEqual(serialized_lines[0], u"3\n")
             self.assertEqual(len(serialized_lines), 4)
-            self.assertEqual(serialized_lines[1][1:], "\tslovo\t3\n")
-            self.assertEqual(serialized_lines[2][1:], "\tdruhé\t2\n")
-            self.assertEqual(serialized_lines[3][1:], "\tprvé\t1\n")
+            self.assertEqual(serialized_lines[1][1:], u"\tslovo\t3\n")
+            self.assertEqual(serialized_lines[2][1:], u"\tdruhé\t2\n")
+            self.assertEqual(serialized_lines[3][1:], u"\tprvé\t1\n")
 
     def test_loadFromText_legacy(self):
         """
@@ -213,8 +201,8 @@ class TestDictionary(unittest.TestCase):
         Legacy format does not have num_docs on the first line.
         """
         tmpf = get_tmpfile('load_dict_test_legacy.txt')
-        no_num_docs_serialization = "1\tprvé\t1\n2\tslovo\t2\n"
-        with open(tmpf, "w") as file:
+        no_num_docs_serialization = to_utf8("1\tprvé\t1\n2\tslovo\t2\n")
+        with open(tmpf, "wb") as file:
             file.write(no_num_docs_serialization)
 
         d = Dictionary.load_from_text(tmpf)
@@ -227,8 +215,8 @@ class TestDictionary(unittest.TestCase):
     def test_loadFromText(self):
         """`Dictionary` can be loaded from textfile."""
         tmpf = get_tmpfile('load_dict_test.txt')
-        no_num_docs_serialization = "2\n1\tprvé\t1\n2\tslovo\t2\n"
-        with open(tmpf, "w") as file:
+        no_num_docs_serialization = to_utf8("2\n1\tprvé\t1\n2\tslovo\t2\n")
+        with open(tmpf, "wb") as file:
             file.write(no_num_docs_serialization)
 
         d = Dictionary.load_from_text(tmpf)
@@ -262,7 +250,8 @@ class TestDictionary(unittest.TestCase):
             "The generation of random binary unordered trees",
             "The intersection graph of paths in trees",
             "Graph minors IV Widths of trees and well quasi ordering",
-            "Graph minors A survey"]
+            "Graph minors A survey"
+        ]
         stoplist = set('for a of the and to in'.split())
         texts = [
             [word for word in document.lower().split() if word not in stoplist]
